@@ -1,0 +1,19 @@
+#nunca suba estes arquivos
+.env
+*.env
+env.example
+
+# Ambientes Virtuiais
+venv/
+.venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# Dados Locais
+*.csv
+*.parquet

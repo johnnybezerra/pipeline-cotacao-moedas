@@ -1,0 +1,181 @@
+# =============================================================
+# Projeto de Conclusão do Curso
+# Jornada Data Engineer & Analytics 
+# Ambiente completo: MinIO + Airflow + PostgreSQL + Metabase
+#
+# Portas Externas (Host):
+#   9000 → MinIO API S3
+#   9001 → MinIO Console
+#   8080 → Airflow UI
+#   5432 → PostgreSQL Airflow  (backend do Airflow)
+#   5433 → PostgreSQL Metabase (backend do Metabase)
+#   5434 → PostgreSQL Data     (banco do projeto — Gold + Metabase conecta aqui)
+#   3000 → Metabase UI
+# =============================================================
+
+services:
+
+  # MinIO — Object Storage (Data Lake Bronze/Silver/Gold)
+  # Console : http://localhost:9001
+  # API S3   : http://localhost:9000
+  minio:
+    image: minio/minio
+    container_name: minio
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  
+  # PostgreSQL — backend do Airflow
+  # Host  : localhost:5432
+  # Banco : airflow
+  postgres-airflow:
+    image: postgres:16
+    container_name: postgres-airflow
+    environment:
+      POSTGRES_USER:     ${PG_AIRFLOW_USER}
+      POSTGRES_PASSWORD: ${PG_AIRFLOW_PASSWORD}
+      POSTGRES_DB:       ${PG_AIRFLOW_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "${PG_AIRFLOW_DB}", "-U", "${PG_AIRFLOW_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped  
+
+  # PostgreSQL — banco de dados do projeto (Gold + Metabase)
+  # Host  : localhost:5434
+  # Banco : projeto
+  postgres_data:
+    image: postgres:16
+    container_name: postgres-data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "${PG_DATA_DB}", "-U", "${PG_DATA_USER}"]
+      timeout: 45s
+      interval: 10s
+      retries: 10
+    restart: always
+    environment:
+      POSTGRES_USER:     ${PG_DATA_USER}
+      POSTGRES_PASSWORD: ${PG_DATA_PASSWORD}
+      POSTGRES_DB:       ${PG_DATA_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+  
+  # Airflow — orquestrador de pipelines
+  # UI : http://localhost:8080
+  # Airflow — orquestrador de pipelines
+  # UI : http://localhost:8080
+  # Airflow — orquestrador de pipelines
+  # UI : http://localhost:8080
+  airflow:
+    # image: apache/airflow:2.8.1 - Utilizado para configurar o airflow.Dockerfile
+    build:
+      context: .
+      dockerfile: ./airflow/config_airflow/airflow.Dockerfile
+    container_name: airflow
+    environment:
+      _PIP_ADDITIONAL_REQUIREMENTS: ""
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${PG_AIRFLOW_USER}:${PG_AIRFLOW_PASSWORD}@postgres-airflow:5432/${PG_AIRFLOW_DB}
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${PG_AIRFLOW_USER}:${PG_AIRFLOW_PASSWORD}@postgres-airflow:5432/${PG_AIRFLOW_DB}
+      AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__WEBSERVER__WEB_SERVER_HOST: "0.0.0.0"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      DB_HOST: postgres-data
+      DB_PORT: 5432
+      DB_NAME: ${PG_DATA_DB}
+      DB_USER: ${PG_DATA_USER}
+      DB_PASSWORD: ${PG_DATA_PASSWORD}
+      # === INICIALIZAÇÃO AUTOMÁTICA NATIVA DO AIRFLOW ===
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: 'admin'
+      _AIRFLOW_WWW_USER_PASSWORD: 'admin123'
+      _AIRFLOW_WWW_USER_ROLE: 'Admin'
+      _AIRFLOW_WWW_USER_EMAIL: 'admin@example.com'
+      _AIRFLOW_WWW_USER_FIRSTNAME: 'Admin'
+      _AIRFLOW_WWW_USER_LASTNAME: 'User'
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/config_airflow:/opt/airflow/config_airflow
+    # O comando standalone roda tudo (Migração, Criação de Usuário, Webserver e Scheduler) perfeitamente em 1 container
+    command: standalone
+    restart: unless-stopped
+
+  # PostgreSQL — backend do Metabase
+  # Host  : localhost:5433
+  # Banco : metabase
+  postgres-metabase:
+    image: postgres:15
+    container_name: postgres-metabase
+    environment:
+      POSTGRES_DB:       ${PG_METABASE_DB}
+      POSTGRES_USER:     ${PG_METABASE_USER}
+      POSTGRES_PASSWORD: ${PG_METABASE_PASSWORD}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_metabase_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "${PG_METABASE_DB}", "-U", "${PG_METABASE_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Metabase — visualização e dashboards
+  # UI : http://localhost:3000
+  metabase:
+    image: metabase/metabase:v0.55.14.2
+    container_name: metabase
+    environment:
+      MB_DB_TYPE:   postgres
+      MB_DB_DBNAME: ${PG_METABASE_DB}
+      MB_DB_PORT:   5432
+      MB_DB_USER:   ${PG_METABASE_USER}
+      MB_DB_PASS:   ${PG_METABASE_PASSWORD}
+      MB_DB_HOST:   postgres-metabase
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres-metabase:
+        condition: service_healthy
+    volumes:
+      - metabase_data:/metabase-data
+    restart: unless-stopped
+
+volumes:
+  minio_data:
+  postgres_airflow_data:
+  postgres_data:
+  postgres_metabase_data:
+  metabase_data:
